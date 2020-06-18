@@ -7,6 +7,7 @@ import (
 
 	"github.com/replit/upm/internal/api"
 	"github.com/replit/upm/internal/backends/dart"
+	"github.com/replit/upm/internal/backends/deno"
 	"github.com/replit/upm/internal/backends/elisp"
 	"github.com/replit/upm/internal/backends/java"
 	"github.com/replit/upm/internal/backends/nodejs"
@@ -26,6 +27,7 @@ var languageBackends = []api.LanguageBackend{
 	python.Python2Backend,
 	nodejs.NodejsNPMBackend,
 	nodejs.NodejsYarnBackend,
+	deno.DenoLandXBackend,
 	ruby.RubyBackend,
 	elisp.ElispBackend,
 	dart.DartPubBackend,
