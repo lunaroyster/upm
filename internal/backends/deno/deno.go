@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"sort"
 
 	// "net/url"
 	// "os"
@@ -13,6 +14,7 @@ import (
 
 	// "github.com/hashicorp/go-version"
 
+	"github.com/agnivade/levenshtein"
 	"github.com/replit/upm/internal/api"
 	"github.com/replit/upm/internal/util"
 )
@@ -39,7 +41,7 @@ func getJson(url string) []byte {
 	return bodyBytes
 }
 
-// denoPatterns are FilenamePatterns for DenoLandXBackend
+// denoPatterns are FilenamePatterns for Deno files.
 var denoPatterns = []string{"*.js", "*.ts"}
 
 // Implements ListLockfile for deno-deno.land/x backend
@@ -61,6 +63,7 @@ func listDenoLockFile() map[api.PkgName]api.PkgVersion {
 
 // DenoXPackage: Package metadata, as accessible on DENO_X_DATABASE
 type DenoXPackage struct {
+	Name           string
 	Type           string `json:"type"`
 	Owner          string `json:"owner"`
 	Repo           string `json:"repo"`
@@ -70,15 +73,79 @@ type DenoXPackage struct {
 	Package        string `json:"package"`
 }
 
-func searchDenoPackage(query string) []api.PkgInfo {
+type PackageMatch struct {
+	Package             DenoXPackage
+	LevenshteinDistance int
+}
+type byLeven []PackageMatch
 
-	pkgString := getJson(DENO_X_DATABASE)
-	var i map[string]DenoXPackage
-	json.Unmarshal(pkgString, &i)
-	fmt.Println(i["oak"])
+func (s byLeven) Len() int {
+	return len(s)
+}
+func (s byLeven) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s byLeven) Less(i, j int) bool {
+	return s[i].LevenshteinDistance < s[j].LevenshteinDistance
+}
 
-	var pkgs []api.PkgInfo
+func queryDenoX(denoPackages map[string]DenoXPackage, query string, count int) []DenoXPackage {
+	var pkgs []DenoXPackage
+	var matches []PackageMatch
+
+	if len(query) == 0 {
+		return pkgs
+	}
+
+	for pkgName := range denoPackages {
+		matches = append(matches, PackageMatch{
+			Package:             denoPackages[pkgName],
+			LevenshteinDistance: levenshtein.ComputeDistance(pkgName, query),
+		})
+	}
+
+	sort.Sort(byLeven(matches))
+
+	for i, match := range matches {
+		if i > 10 || match.LevenshteinDistance > 2 {
+			break
+		}
+		pkgs = append(pkgs, match.Package)
+	}
 	return pkgs
+}
+
+func searchDenoPackage(query string) []api.PkgInfo {
+	// Download packages
+	pkgString := getJson(DENO_X_DATABASE)
+	var denoPackages map[string]DenoXPackage
+	if err := json.Unmarshal(pkgString, &denoPackages); err != nil {
+		util.Die("Error downloading deno packages: %s", err)
+	}
+	for pkgName := range denoPackages {
+		p := denoPackages[pkgName]
+		p.Name = pkgName
+		denoPackages[pkgName] = p
+	}
+
+	denoPkgs := queryDenoX(denoPackages, query, 10)
+
+	var packages []api.PkgInfo
+	for _, denoPkg := range denoPkgs {
+		pkg := api.PkgInfo{
+			Name:        denoPkg.Name,
+			Description: denoPkg.Description,
+			Author:      denoPkg.Owner,
+		}
+		if denoPkg.Type == "github" {
+			pkg.SourceCodeURL = fmt.Sprintf("https://github.com/%s/%s", denoPkg.Owner, denoPkg.Repo)
+			pkg.BugTrackerURL = fmt.Sprintf("https://github.com/%s/%s/issues", denoPkg.Owner, denoPkg.Repo)
+		}
+
+		packages = append(packages, pkg)
+	}
+
+	return packages
 }
 
 // Implements Info for deno-deno.land/x backend
